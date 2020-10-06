@@ -1,0 +1,157 @@
+---
+title: "Algoritmo de Soft-Thresholding"
+author: "Gerardo Martínez"
+date: "4/8/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\X}{\mathbf{X}}
+\newcommand{\eps}{\varepsilon}
+
+Construiremos en primer lugar la función $\texttt{softThresold()}$. Esta función tiene como entrada dos parámetros, una matriz $\mathbf{M} \in \mathbb{R}^{m \times n}$ y un parámetro $\tau > 0$. La función computará el \textit{soft-thresholding} de esta matriz. En primer lugar, se computará la descomposición compacta en valores singulares de $\mathbf{M}$, es decir
+\begin{equation*}
+    \mathbf{M} = \mathbf{U} \boldsymbol{\Sigma} \mathbf{V}^\top,
+\end{equation*}
+donde $\mathbf{U}$ y $\mathbf{V}$ son matrices de tamaño $n \times r$ y $r \times m$, respectivamente, y que cumplen que $\mathbf{U}^{\top}\mathbf{U} = \mathbf{V}^{\top}\mathbf{V} = \mathbf{I}_r$, y $\boldsymbol{\Sigma} = \mathrm{diag}(\{\sigma_1, \dots, \sigma_r\})$ donde $\sigma = \{\sigma_i\}_{i =1}^r$ son los valores singulares positivos de la matrix $\mathbf{M}$. Seguidamente, se construirá calculará $\mathcal{D}_\tau$ tal que $\mathcal{D}_{\tau}: \mathbb{R}^{n \times m} \to \mathbb{R}^{n \times m}$ y
+\begin{equation}
+    \mathcal{D}_{\tau}(\mathbf{X}) = \mathbf{U}\mathcal{D}_{\tau}(\boldsymbol{\Sigma}) \mathbf{V}^\top, \quad \mathcal{D}_{\tau}(\boldsymbol{\Sigma}) = \operatorname{diag}((\sigma - \tau)_+)
+\end{equation}
+donde $(\cdot)_+ = \max\{0, \cdot\}$. El resultado de la función $\texttt{softThresold()}$ es, entonces, la terna $[\mathbf{U}, \mathcal{D}_{\tau}(\boldsymbol{\Sigma}), \mathbf{V}]$.
+
+```{r soft-threshold}
+softThreshold <- function(X, tau){
+  # se construye la descomposicion svd
+  svd_aux <- svd(X)
+  
+  # se aplica soft-thresholding a los valores singulares
+  for(i in 1:length(svd_aux$d)){
+      svd_aux$d[i] <- max(svd_aux$d[i]-tau, 0)
+  }
+  
+  return(list(U = svd_aux$u,
+              Sigma = diag(svd_aux$d),
+              V = svd_aux$v))
+}
+```
+
+En segundo lugar, construiremos la función $\texttt{pOmega()}$. Esta función tomará como entrada una matriz $\mathbf{M} \in \mathbb{R}^{m \times n}$, potencialmente con entradas faltantes y construirá el operador $\mathcal{P}_{\Omega}: \mathbb{R}^{m \times n} \to \mathbb{R}^{m \times n}$ que transforma las entradas faltantes de $\mathbf{M}$ en 0, es decir
+
+\begin{equation*}
+    [\mathcal{P}_{\Omega}(\mathbf{M})]_{ij} = \begin{cases}
+    \mathbf{M}_{ij} & \text{si } (i,j) \in \Omega \\
+    0 & \text{si no}
+    \end{cases}
+\end{equation*}
+donde
+\begin{equation*}
+    \Omega = \{(i,j) \in \{1, \dots, m\} \times \{1, \dots, n\}: \mathbf{M}_{ij} \text{ es una entrada especificada}\}.
+\end{equation*}
+
+```{r pOmega}
+pOmega <- function(M){
+  # definimos numero de columnas
+  # y de filas
+  m <- nrow(M)
+  n <- ncol(M)
+  
+  # construimos una matriz auxiliar
+  # de unos y ceros
+  na_aux <- matrix(as.numeric(!is.na(M)), nrow = m, byrow = F)
+  
+  # transformamos los NA de la matrix original en 0s
+  M[is.na(M)] <- 0
+  return(na_aux * M)
+}
+```
+
+En tercer lugar construiremos la función $\texttt{matrixCompletion()}$. Esta tomará como parámetros de entrada:
+
+* Una matriz $\mathbf{M} \in \R^{m \times n}$ a completar.
+* Un parámetro $\tau > 0$ correspondiente a la función objetivo $f_\tau: \R^{m \times n}\to \R$ tal que $f_{\tau}(\X) = \tau\norm{\X}_* + \frac{1}{2}\norm{\X}^2_F$.
+* Un paso $\delta > 0$ correspondiente con el paso de gradiente ascendente del algoritmo soft-thresholding, 
+* Un parámetro $\kappa$ para construir una sucesión de pasos de gradiente ascendente $\delta_k = \delta_{k-1} \cdot \kappa$. Por defecto se considerará $\kappa = 1$, es decir, $\delta_k = \delta$ para todo $\delta$.
+* Una tolerancia $\eps > 0$ que corresponde con el criterio de parada $$\frac{\norm{\mathcal{P}_{\Omega}(\X_{(k)}-\mathbf{M})}_{F}}{\norm{\mathcal{P}_{\Omega}(\mathbf{M})}_{F}}\leq \eps$$. 
+* Un número de iteraciones máximo $\texttt{maxit}$ que, por defecto, es igual a $1000$
+* Una matriz $\mathbf{Z}_0$ de valores iniciales de los multiplicadores de Lagrange, por defecto se tomará $\mathbf{Z}_0 \leftarrow \mathbf{0}_{m \times n}$.
+
+El algoritmo devolverá la matriz $\tilde{M}$, la completación de la matriz $\mathbf{M}$, descompuesta en valores singulares.
+
+Como la función $\texttt{matrixCompletion()}$ utiliza la norma Frobenius de una matriz, construiremos una función que calcula esta norma. Esta función, $\texttt{normVec()}$ toma como entrada una matriz $\mathbf{M} \in \R^{m \times n}$ y devuelve $\norm{\mathbf{M}}_F$ pero también puede tomar como entrada un vector $\mathbf{v} \in \R^n$ y devuelve, en este caso, $\norm{\mathbf{v}}_2$.
+
+```{r}
+normVec <- function(x) sqrt(sum(x^2))
+```
+
+Podemos, entonces, implementar $\texttt{matrixCompletion()}$:
+```{r}
+matrixCompletion <- function(M, tau, delta, kappa, eps, maxit, Z0){
+	# definimos numero de columnas
+	# y de filas de M
+	m <- nrow(M)
+	n <- ncol(M)
+
+	# inicializamos la matriz Z de multiplicadores
+	if(missing(Z0)){
+		Z <- matrix(rep(0, times = m*n), nrow = m)
+	} else {
+		Z <- Z0
+	}
+	
+	# definimos delta en caso de que este no este determinado
+	if (missing(delta)){
+	  delta <- (1.2)*(m*n/(sum(!is.na(M))))
+	}
+
+	# inicializamos la matriz X
+	X <- matrix(rep(1, times = m*n), nrow = m)
+
+	# extraemos las entradas conocidas de M
+	M_omega <- pOmega(M)
+
+	# definimos la funcion objetivo
+	objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+
+	# definimos por defecto una cantidad de 
+	# iteraciones igual a 1000
+	if(missing(maxit)){
+		maxit <- 1000
+	}
+  
+	# definimos la reduccion de los pasos
+	# en caso de que esta no este determinada
+	if(missing(kappa)){
+	kappa <- 1
+	}
+	
+	prev <- normVec(M_omega)
+	for(i in 1:maxit){
+		if(objFunction >= eps){
+			softThresholdAux <- softThreshold(Z, tau)
+			X <- softThresholdAux$U%*%softThresholdAux$Sigma%*%t(softThresholdAux$V)
+			Z <- Z + delta*(M_omega-pOmega(X))
+			objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+		} else{
+			break
+		}
+	  if (i %% 1e1 == 0){
+			print(i)
+		  print(paste0("Cambio relativo = ", (objFunction - prev)/prev))
+		  print(paste0("Criterio de parada = ", objFunction))
+		  print(paste0("Norma nuclear = ", sum(softThresholdAux$Sigma)))
+	  }
+	  prev <- objFunction
+	  
+	  delta <- delta*kappa
+	}
+	if(objFunction >= eps){
+	  message("El algoritmo no convergió")
+	}else{
+	  message("El algoritmo convergió")
+	}
+	return(softThresholdAux)
+}
+```
+
