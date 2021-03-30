@@ -1,0 +1,229 @@
+---
+title: "Codigo - Simulacion de casos de prueba"
+author: "Gerardo Martínez"
+date: "10/2/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+\newcommand{\R}{\mathbb{R}}
+
+Construiremos una serie de casos de prueba para estudiar el desempeño de los algoritmos propuestos. 
+
+# Extracción de frecuencias alélicas
+En la presente sección extraeremos las frecuencias alélicas de una base de datos de haplotipos de individuos reales. Contamos con 146 haplotipos correspondientes a tres poblaciones: vascos, yorubas y japoneses. Estos individuos provienen del Human Genome Diversity Panel, una base de datos de 938 individuos y SNPs de los 23 cromosomas. En nuestro caso nos concentraremos en 49408 posiciones del cromosoma 1.
+
+Comencemos por cargar la base de datos. 
+
+```{r levantar datos del cromosoma}
+crom01 <- read.csv(file = "~/Material/Maestria/Codigo/crom01.csv",
+                   header = F, sep = " ")
+```
+
+La base de datos cuenta con 146 filas correspondientes a los individuos y 49408 variables, una correspondiente a la población de origen y el resto correspondiente a los SNPs.
+
+```{r echo = FALSE}
+crom01[c(1,72, 140), 1:10]
+```
+
+Extraigamos, a continuación, las frecuencias alélicas de cada variante dentro de cada una de las poblaciones. Para esto utilizaremos la función $\texttt{aggregate()}$. 
+
+```{r}
+frec_alel <- aggregate(crom01[,-1], 
+                       by = list(Poblacion = crom01$V1), FUN = mean)
+```
+
+# Construcción de casos de prueba
+
+## Caso 1: Poblaciones originales y mezcladas con tasa baja de datos faltantes
+El primer caso consiste en simular 100 individuos de cada una de las poblaciones y 150 individuos mezclados. Los individuos mezclados seguirán el siguiente esquema: 50 serán individuos Vasco-Yorubas, 50 serán Vasco-Japoneses y 50 serán Yoruba-Japoneses. A cada uno de los individuos se le aplicará una tasa de datos faltantes variable entre $5\%$ y $50\%$, siendo los $\texttt{NA}$ considerados al azar.
+
+Para construir a los individuos construiremos una función llamada $\texttt{admixture()}$ que construya individuos de dos poblaciones dadas. La función tomará como parámetros
+
+* dos vectores $p_1$ y $p_2$ de frecuencias alélicas correspondientes a las poblaciones $1$ y $2$, respectivamente,
+* un número $n$ de individuos a simular,
+
+y devolverá una matriz $\mathbf{M} \in \R^{k \times n}$ con $n$ individuos considerados como columnas.
+
+```{r}
+admixture <- function(n, p){
+	numPob <- nrow(p)
+	k <- ncol(p)
+
+	individuos <- matrix(0, nrow = k, ncol = n)
+
+	for(i in 1:n){
+		p_ind <- rep(0, times = k)
+		
+		# se calcula el numero de fragmentos
+		# que recombinaran entre las dos poblaciones
+		num_recomb <- sample(1:10, size = 1)
+		pos_recomb <- c(1, sort(sample(2:(k-1), size = num_recomb)), k)
+		
+		j <- 1
+		
+		while(j < length(pos_recomb)){
+			switch <- sample(1:numPob, 1)
+			
+			p_ind[pos_recomb[j]:pos_recomb[j+1]] <- p[switch, pos_recomb[j]:pos_recomb[j+1]]
+			
+			j <- j+1
+		}
+		
+		individuos[, i] <- rbinom(n = k, size = 1, prob = p_ind)
+	}
+
+	return(individuos)
+}
+```
+
+A partir de esto podemos construir la matriz con los individuos originales y los mezclados. Para esto construiremos una función que dado un vector de frecuencias alélicas $p \in \R^d$, simule $n$ individuos de acuerdo a este vector.
+
+```{r}
+simulaInd <- function(p, n){
+  p <- as.numeric(p)
+  d <- length(p)
+  
+  M <- matrix(0, nrow = d, ncol = n)
+  for (j in 1:n){
+    M[, j] <- rbinom(d, size = 1, prob = p)
+  }
+  
+  return(M)
+}
+```
+
+Construiremos entonces la matriz $\texttt{caso1}$ con las poblaciones mencionadas anteriormente. 
+
+```{r}
+caso1 <- matrix(0, nrow = 10000, ncol = 450)
+
+pos.aux <- sort(sample(2:49408, size = 10000, replace = F))
+
+
+caso1[, 1:100] <- simulaInd(p = frec_alel[1, pos.aux], n = 100)
+caso1[, 101:200] <- simulaInd(p = frec_alel[2, pos.aux], n = 100)
+caso1[, 201:300] <- simulaInd(p = frec_alel[3, pos.aux], n = 100)
+
+caso1[, 301:350] <- admixture(n = 50, 
+                              p = as.matrix(frec_alel[c(1,2), pos.aux]))
+
+caso1[, 351:400] <- admixture(n = 50, 
+                              p = as.matrix(frec_alel[c(1,3), pos.aux]))
+
+caso1[, 401:450] <- admixture(n = 50, 
+                              p = as.matrix(frec_alel[c(2,3), pos.aux]))
+```
+
+Construiremos un esquema de datos faltantes variable por individuo. Para cada uno de los individuos se construirá se simulará una variable aleatoria $p$ con distribución uniforme entre $0.05$ y $0.5$. Luego se simularán $d$ variables aleatorias con distribución Bernoulli, $X_1, \dots, X_d$ de tal forma que si $X_i = 1$ la posición $i$ del genoma será un dato faltante y si $X_i = 0$ se conservará el dato original. Para esto utilizaremos la función $\texttt{hacerNAindividuo()}$.
+
+```{r}
+caso1_NA <- hacerNAindividuo(M = caso1, 
+                          indCol = T, 
+                          p_vec = runif(450, min = 0.05, max = 0.5))
+```
+
+## Caso 2: Poblaciones originales y mezcladas con tasa alta de datos faltantes
+En el segundo caso utilizaremos los mismos individuos que en el caso anterior pero simularemos una tasa de datos faltantes más elevada que en el caso anterior. En esta oportunidad, para cada individuo simularemos una proporción de datos faltantes $p$ que seguirá una distribución uniforme entre $0.9$ y $0.99$.
+
+```{r}
+caso2_NA <- hacerNAindividuo(M = caso1, 
+                          indCol = T, 
+                          p_vec = runif(450, min = 0.9, max = 0.99))
+```
+
+## Caso 3: Mitad de los individuos con tasas elevadas de datos faltantes
+En el tercer caso utilizaremos los mismos individuos que en los casos anteriores pero construiremos un esquema distinto de datos faltantes. La mitad de los individuos de cada población _pura_ seguirá tendrá una proporción de datos faltantes con distribución normal de media $0.95$ y varianza $0.001$; la otra mitad de los individuos de las poblaciones puras y todos los individuos de las poblaciones mezcladas tendrán una proporción de datos faltantes con distribucción normal de media $0.5$ y varianza $0.01$.
+
+```{r}
+p_caso3 <- c(rnorm(50, mean = 0.90, sd = sqrt(0.001)),
+             rnorm(50, mean = 0.5, sd = sqrt(0.01)),
+             rnorm(50, mean = 0.90, sd = sqrt(0.001)),
+             rnorm(50, mean = 0.5, sd = sqrt(0.01)),
+             rnorm(50, mean = 0.90, sd = sqrt(0.001)),
+             rnorm(50, mean = 0.5, sd = sqrt(0.01)),
+             rnorm(150, mean = 0.90, sd = sqrt(0.001)))
+
+caso3_NA <- hacerNAindividuo(M = caso1, 
+                          indCol = T, 
+                          p_vec = p_caso3)
+```
+
+
+## Caso 4: Poblacciones mezcladas con datos faltantes
+En el cuarto caso construiremos un esquema distintos de datos faltantes. Las poblaciones _puras_ tendrán una proporción de datos faltantes baja ($p \in (0, 0.1)$) mientras que las poblaciones mezcladas tendrán una proporción alta ($p \in (0.3, 0.7)$). 
+
+```{r}
+p_caso4 <- c(runif(300, min = 0, max = 0.1),
+             runif(150, min = 0.30, max = 0.7))
+
+caso4_NA <- hacerNAindividuo(M = caso1, 
+                          indCol = T, 
+                          p_vec = p_caso4)
+```
+
+# Construcción de gráficos
+
+```{r}
+grafPCA_altMin <- function(U, Y, mu, xPCA, yPCA, plotCentr){
+  library(ggplot2)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PCA", xPCA, sep = "")
+  nombreEjey <- paste("PCA", yPCA, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = Y[xPCA,], 
+                              nombreEjey = Y[yPCA, ],
+                              Poblacion = c(rep("Vasco", 100), rep("Japones", 100), rep("Yoruba", 100), rep("Mezcla", 150)))
+  
+  
+  g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, aes(col=Poblacion), alpha = 0.5, size=3) 
+    
+    print(g)
+    
+}
+```
+
+```{r}
+grafPCA_altMin <- function(U, Y, mu, xPCA, yPCA, plotCentr){
+  library(ggplot2)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PCA", xPCA, sep = "")
+  nombreEjey <- paste("PCA", yPCA, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = Y[xPCA,], 
+                              nombreEjey = Y[yPCA, ],
+                              Poblacion = c(rep("Vasco", 100), rep("Japones", 100), rep("Yoruba", 100), rep("Mezcla", 150)))
+  
+  
+  g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, aes(col=Poblacion), alpha = 0.5, size=3) 
+    
+    print(g)
+    
+}
+```
+
+```{r}
+grafPCA_altMin <- function(U, Y, mu, n, k, xPCA, yPCA, plotCentr){
+  library(ggplot2)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PCA", xPCA, sep = "")
+  nombreEjey <- paste("PCA", yPCA, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = Y[xPCA,], 
+                              nombreEjey = Y[yPCA, ],
+                              Poblacion = rep(as.character(1:k), each = n))
+  
+  
+  g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, aes(col=Poblacion), alpha = 0.5, size=3) 
+    
+    print(g)
+    
+}
+```
+
