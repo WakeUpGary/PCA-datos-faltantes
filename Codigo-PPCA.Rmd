@@ -1,0 +1,424 @@
+---
+title: "Codigo-PPCA"
+author: "Gerardo Martínez"
+date: "2/3/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+\newcommand{\X}{\mathbf{X}}
+\newcommand{\x}{\mathbf{x}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\eps}{\varepsilon}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+
+En el siguiente informe se implementará el algoritmo MAP-EM para resolver el problema de análisis de componentes principales probabilístico.
+
+# Implementación naíf del algoritmo
+
+El algoritmo puede ser resumido en los pasos siguientes.
+
+1. Se toma como entrada una matriz $\X \in \R^{d \times n}$ cuyas columnas corresponden a las observaciones $\{\x_1, \dots, \x_n\} \subset \R^d$ y un número real $\eps$ positivo asociado al criterio de parada del algoritmo.
+
+2. Se extrae $\Omega$, el conjunto de entradas no faltantes de la matriz $\X$.
+
+3. Se transforma $\X_{ij} \leftarrow 0$ si $(i,j) \notin \Omega$.
+
+4. Se inicializa
+    \begin{equation*}
+        \boldsymbol{\mu}_{(0)} \leftarrow  \frac{1}{n} \sum_{i = 1}^n \x_i \quad \text{y} \quad \boldsymbol{\Sigma}_{(0)} \leftarrow  \frac{1}{n}\sum_{i = 1} (\x_i - \boldsymbol{\mu}_{(1)})(\x_i - \boldsymbol{\mu}_{(1)})^{\top}
+    \end{equation*}
+
+5. Para cada $\x_i$ se construye una matriz $\mathbf{P}_i$ de permutaciones que ordena las entradas de la observación $\x_i$ de tal forma que sus entradas no observadas aparezcan primero:
+    \begin{equation*}
+    \begin{pmatrix}
+    \x_N^i\\ 
+    \x_O^i
+    \end{pmatrix} = \mathbf{P}_j\x_i, \quad \begin{pmatrix}
+    \boldsymbol{\mu}_N^i\\ 
+    \boldsymbol{\mu}_O^i
+    \end{pmatrix} = \mathbf{P}_i \boldsymbol{\mu}_{\x}, \quad \text{y} \quad \begin{pmatrix}
+    \boldsymbol{\Sigma}_{NN}^i & \boldsymbol{\Sigma}_{NO}^i\\ 
+    \boldsymbol{\Sigma}_{ON}^i & \boldsymbol{\Sigma}_{OO}^i
+    \end{pmatrix} = \mathbf{P}_i \boldsymbol{\Sigma}_{\x} \mathbf{P}_i^{\top},
+\end{equation*}
+
+6. Se construye una sucesión $\{\boldsymbol{\mu}_{(k)}\}_{k \in \N}$ y $\{{\boldsymbol{\Sigma}}_{(k)}\}_{k \in \N}$ de la siguiente forma. Mientras se cumpla que
+    \begin{equation*}
+        \norm{\boldsymbol{\mu}_{(k)} - \boldsymbol{\mu}_{(k-1)}}_2 < \eps
+    \end{equation*}
+    (este es un criterio de parada posible, no necesariamente el único) se actualiza el valor de $\x_i$ como
+    \begin{equation*}
+        \x_i \leftarrow \mathbf{P}_i^{\top} \begin{pmatrix}
+    \boldsymbol{\mu}_N^i + \boldsymbol{\Sigma}_{NO}^i (\boldsymbol{\Sigma}_{OO}^i)^{-1} (\x^i_O - \boldsymbol{\mu}_O^i) \\ 
+    \x^i_O
+    \end{pmatrix}
+    \end{equation*}
+    y, luego,
+    \begin{equation*}
+        \boldsymbol{\mu}_{(k)} \leftarrow  \frac{1}{n} \sum_{i = 1}^n \x_i \quad \text{y} \quad \boldsymbol{\Sigma}_{(k)} \leftarrow  \frac{1}{n}\sum_{i = 1} (\x_i - \boldsymbol{\mu}_{(1)})(\x_i - \boldsymbol{\mu}_{(1)})^{\top}
+    \end{equation*}
+    
+7. El algoritmo devuelve $\widehat{\boldsymbol{\mu}}$, $\widehat{\boldsymbol{\Sigma}}$ y la matriz $\tilde{\X}$ sin entradas faltantes. 
+
+En la práctica el algoritmo puede ser implementado de la siguiente forma. 
+
+En primer lugar, será necesario para poder calcular las partes observadas y no observadas de $\x_i$, $\boldsymbol{\mu}$ y $\boldsymbol{\Sigma}$, retener las matrices de permutación $\mathbf{P}_i$ para cada $i = 1, \dots, n$. Asimismo, será de interés retener cuántos son los valores faltantes de cada una de las observaciones. Por lo tanto, dada la matriz $\X$ podemos construir una matriz $\mathbf{P} = \begin{pmatrix}\mathbf{P}_1 \dots \mathbf{P}_n \end{pmatrix}\in \R^{d \times n}$ tal que $\mathbf{P}_i$ sea la permutación del vector $(1, \dots, n)$ necesaria para obtener la partición de la observación $\x_i$ dada por
+\begin{equation}
+\x_i = \begin{pmatrix}
+    \x_N^i\\ 
+    \x_O^i
+    \end{pmatrix}.
+\end{equation}
+
+```{r eval=FALSE}
+# se inicializa la matriz P de permutaciones
+	P <- X
+	naX <- rep(0, n)
+
+	for (j in 1:n){
+	  # cuenta el número de datos faltantes de cada observacion
+		naX[j] <- sum(is.na(X[,j]))
+		
+		# guarda en la columna j de P la permutacion apropiada
+		P[,j] <- sort(X[,j], na.last = F, index.return = T)$ix
+}
+```
+
+A continuación, inicializaremos el vector $\boldsymbol{\mu}$ y la matriz $\boldsymbol{\Sigma}$. Como la secuencia $\boldsymbol{\mu}_{(k)}$ estará ligada al criterio de parada, construiremos dos vector $\texttt{mu_antiguo}$ y $\texttt{mu_nuevo}$. Para que el algoritmo siempre se inicialice construiremos un vector $\texttt{mu_antiguo}$ con entradas iguales a $\texttt{+Inf}$. 
+
+```{r eval = FALSE}
+# transformamos los NA en 0
+	X[is.na(X)] <- 0
+
+	# inicializamos mu
+	mu_anterior <- rep(+Inf, d)
+	mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
+
+	# inicalizamos sigma
+	Sigma <- cov(t(X))
+```
+
+El siguiente paso será construir la función asociada al criterio de parada. Vamos a parar de iterar el algoritmo cuando exista un $k \in \N$ para el cual
+\begin{equation*}
+\frac{\norm{\mu_{(k)}-\mu_{(k-1)}}_2}{\norm{\mu_{(k)}}_2} < \eps
+\end{equation*}
+
+Para esto necesitaremos la función $\texttt{normVec()}$ que calculará esto en cada paso.
+```{r}
+normVec <- function(x) sqrt(sum(x^2))
+```
+
+Luego, la función objetivo será
+
+```{r eval = FALSE}
+funcObj <- normVec(mu_anterior - mu_nuevo)/normVec(mu_nuevo)
+```
+
+Resta implementar la iteración en cada uno de los pasos. La actualización de los vectores $\x_j$ implica calcular la inversa generalizada de la matriz $\boldsymbol{\Sigma}_{OO}$. Para esto utilizaremos el paquete $\texttt{MASS}$ y su función $\texttt{ginv()}$. Un paso de la iteración puede ser calculado como
+
+```{r eval = FALSE}
+while((funcObj > eps) & (k <= maxit)){
+		# se actualiza el vector mu
+    mu_anterior <- mu_nuevo
+		
+		for(j in 1:n){
+		  # se obtiene el vector xj reordenado
+		  # de tal forma que sus primeras entradas
+		  # sean las observadas
+			xj <- X[P[,j],j]
+			
+			
+			# se reordena mu y sigma en sus partes observadas
+			# y no observadas
+			mu_reorden <- mu_nuevo[P[,j]]
+			sigma_reorden <- Sigma[P[,j], P[,j]]
+			
+			if(naX[j] != 0){
+				muN <- mu_reorden[1:naX[j]]
+				muO <- mu_reorden[(naX[j]+1):d]
+				sigmaNO <- sigma_reorden[1:naX[j], (naX[j]+1):d]
+				sigmaON <- sigma_reorden[(naX[j]+1):d, 1:naX[j]]
+				sigmaOO <- sigma_reorden[(naX[j]+1):d, (naX[j]+1):d]
+				
+				xj <- c(muN + sigmaNO%*%ginv(sigmaOO)%*%(xj[(naX[j]+1):d]-muO), xj[(naX[j]+1):d])
+				
+				X[, j] <- xj[order(P[,j])]
+			}
+}
+```
+
+Podemos entonces definir la función $\texttt{ppca()}$. Esta tomará como entradas
+
+* la matriz $\X$,
+* $\texttt{eps}$, el número $\eps > 0$ asociado al criterio de parada,
+* $\texttt{maxit}$, un número opcional de iteraciones máximas, y
+* $\texttt{impr}$, un número opcional que indica cada cuántas iteraciones se deberá imprimir el avance en el algoritmo. 
+
+Como salida la matriz devolverá el vector $\boldsymbol{\mu}$ y la matriz $\boldsymbol{\Sigma}$. 
+
+```{r}
+ppca <- function(X, eps, maxit, impr){
+  X <- as.matrix(X)
+	library(MASS)
+	# se obtiene el numero de filas y columnas de X
+	d <- nrow(X)
+	n <- ncol(X)
+
+	# se inicializa la matriz P de permutaciones
+	P <- X
+	naX <- rep(0, n)
+	
+	tiempoComienzo <- Sys.time()
+
+	for (j in 1:n){
+		# cuenta el número de datos faltantes de cada observacion
+		naX[j] <- sum(is.na(X[,j]))
+		
+		# guarda en la columna j de P la permutacion apropiada
+		P[,j] <- sort(X[,j], na.last = F, index.return = T)$ix
+	}
+
+	# transformamos los NA en 0
+	X[is.na(X)] <- 0
+
+	# inicializamos mu
+	mu_anterior <- rep(+Inf, d)
+	mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
+
+	# inicalizamos sigma
+	sigma <- cov(t(X))
+
+	# inicializamos el iterador
+	k <- 0
+
+	# inicializamos la cantidad de iteraciones
+	# en caso de que estas no hayan sido determinadas
+	if(missing(maxit)){
+		maxit <- 1e3
+	}
+	
+	# inicializamos el parametro impr
+	# en caso de que este no haya sido determinado
+	if(missing(impr)){
+		impr <- round(maxit/100)
+	}
+
+	funcObj <- normVec(mu_anterior - mu_nuevo)/normVec(mu_nuevo)
+  
+	print(mu_nuevo)
+	while((funcObj > eps) & (k <= maxit)){
+	  if(k %% impr == 0){
+			print(paste("Iteracion =", k))
+			print(paste("Error relativo =", funcObj))
+	  }
+	  
+		# se actualiza el vector mu
+		mu_anterior <- mu_nuevo
+		
+		for(j in 1:n){
+		  # se obtiene el vector xj reordenado
+		  # de tal forma que sus primeras entradas
+		  # sean las observadas
+			xj <- X[P[,j],j]
+			
+			
+			# se reordena mu y sigma en sus partes observadas
+			# y no observadas
+			mu_reorden <- mu_nuevo[P[,j]]
+			sigma_reorden <- sigma[P[,j], P[,j]]
+			
+			if(naX[j] != 0){
+				muN <- mu_reorden[1:naX[j]]
+				muO <- mu_reorden[(naX[j]+1):d]
+				sigmaNO <- sigma_reorden[1:naX[j], (naX[j]+1):d]
+				sigmaON <- sigma_reorden[(naX[j]+1):d, 1:naX[j]]
+				sigmaOO <- sigma_reorden[(naX[j]+1):d, (naX[j]+1):d]
+				
+				xj <- c(muN + sigmaNO%*%ginv(sigmaOO)%*%(xj[(naX[j]+1):d]-muO), xj[(naX[j]+1):d])
+				
+				X[, j] <- xj[order(P[,j])]
+			}
+    }
+		
+		mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
+		
+		funcObj <- normVec(mu_nuevo - mu_anterior)/(normVec(mu_nuevo)+1e-8)
+		sigma <- cov(t(X))
+		
+		k <- k+1
+		print(mu_nuevo)
+	}
+
+	tiempoFinal <- Sys.time()
+
+	if (k > maxit){
+		warning("El algoritmo no convergió")
+		message(paste("Error relativo: ", funcObj))
+	} else{
+		message(paste("El algoritmo convergió en", k, "iteraciones. Tiempo hasta la convergencia:", difftime(tiempoFinal, tiempoComienzo, units = "mins")))
+	}
+	return(list("mu" = mu_nuevo, "sigma" = sigma)) 
+}
+```
+
+# Implementación paralela del algoritmo
+
+Implementaremos una versión multinúcleo del algoritmo. Para esto separaremos cada una de las iteraciones a través de una función que denominaremos $\texttt{iterPPCA()}$. 
+```{r}
+iterPPCA <- function(j, P, X, d, naX, mu, sigma){
+	if(naX[j] == 0){
+		return(X[,j])
+	} else {
+		# se obtiene el vector xj reordenado
+		# de tal forma que sus primeras entradas
+		# sean las observadas
+		xj <- X[P[,j],j]
+		
+		
+		# se reordena mu y sigma en sus partes observadas
+		# y no observadas
+		mu_reorden <- mu[P[,j]]
+		sigma_reorden <- sigma[P[,j], P[,j]]
+		
+		if(naX[j] != 0){
+			muN <- mu_reorden[1:naX[j]]
+			muO <- mu_reorden[(naX[j]+1):d]
+			sigmaNO <- sigma_reorden[1:naX[j], (naX[j]+1):d]
+			sigmaON <- sigma_reorden[(naX[j]+1):d, 1:naX[j]]
+			sigmaOO <- sigma_reorden[(naX[j]+1):d, (naX[j]+1):d]
+			
+			xj <- c(muN + sigmaNO%*%ginv(sigmaOO)%*%(xj[(naX[j]+1):d]-muO), xj[(naX[j]+1):d])
+			
+			return(xj[order(P[,j])])
+		}
+	}
+}
+```
+
+```{r}
+iterPPCA2 <- function(j, list){
+  return(iterPPCA(j, P = list$P, X = list$X, d = list$d, naX = list$naX, mu = list$mu, sigma = list$sigma))
+}
+```
+
+Podemos entonces implementar la versión multinucleo de $\texttt{ppca}$ que denominaremos $\texttt{ppcaParal()}$. Esta función tomará los mismos parámetros de entrada y devolverá el mismo resultado que la función que implementa la versión no paralela.
+```{r}
+ppcaParal <- function(X, maxit, eps, impr, p){
+  library(MASS)
+	library(jubilee)
+  
+  X <- as.matrix(X)
+	
+	# se obtiene el numero de filas y columnas de X
+	d <- nrow(X)
+	n <- ncol(X)
+
+	# se inicializa la matriz P de permutaciones
+	P <- X
+	naX <- rep(0, n)
+
+	tiempoComienzo <- Sys.time()
+	
+	for (j in 1:n){
+		# cuenta el número de datos faltantes de cada observacion
+		naX[j] <- sum(is.na(X[,j]))
+		
+		# guarda en la columna j de P la permutacion apropiada
+		P[,j] <- sort(X[,j], na.last = F, index.return = T)$ix
+	}
+
+	# transformamos los NA en 0
+	X[is.na(X)] <- 0
+
+	# inicializamos mu
+	mu_anterior <- rep(+Inf, d)
+	mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
+
+	# inicalizamos sigma
+	sigma <- cov(t(X))
+
+	# inicializamos la cantidad de iteraciones
+	# en caso de que estas no hayan sido determinadas
+	if(missing(maxit)){
+		maxit <- 1e3
+	}
+	
+	# inicializamos el parametro impr
+	# en caso de que este no haya sido determinado
+	#if(missing(impr)){
+	#	impr <- round(maxit/100)
+	#}
+	
+	# inicializamos el iterador
+	k <- 0
+
+	funcObj <- normVec(mu_anterior - mu_nuevo)/normVec(mu_nuevo)
+	
+	evol <- c()
+	
+	while((funcObj > eps) & (k <= maxit)){
+		#if(k %% impr == 0){
+		#	print(paste("Iteracion =", k))
+		#	print(paste("Error relativo =", funcObj))
+		#}
+
+		mu_anterior <- mu_nuevo
+		list <- list("P" = P, "X" = X, "d" = d, "naX" = naX, "mu" = mu_nuevo, "sigma" = sigma)
+		X <- jubilee.mcsapply(1:n, FUN = iterPPCA2, list = list)
+		#X <- sapply(1:n, FUN = iterPPCA2)
+		
+		mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
+		
+		funcObj <- normVec(mu_nuevo - mu_anterior)/(normVec(mu_nuevo)+1e-8)
+		sigma <- cov(t(X))
+		
+		evol <- c(evol, funcObj)
+		k <- k+1
+	}
+	tiempoFinal <- Sys.time()
+
+	if (k > maxit){
+		warning("El algoritmo no convergió")
+		message(paste("Error relativo: ", funcObj))
+	} else{
+		message(paste("El algoritmo convergió en", k, "iteraciones. Tiempo hasta la convergencia:", difftime(tiempoFinal, tiempoComienzo, units = "mins")))
+	}
+	
+	diagSigma <- eigen(sigma)
+	
+	error <- (1/(d-p))*sum(diagSigma$values[(p+1):d])
+	
+	U1 <- diagSigma$vectors[, 1:p]
+	
+	U <- U1%*%(diag(diagSigma$values[1:p]) - error*diag(p))
+	
+	Y <- solve(t(U) %*% U + error*diag(p)) %*% t(U) %*% (X - mu_nuevo %*% t(rep(1, n)))
+	
+	return(list("Y" = Y, "U" = U, "Evol" = evol, "Tiempo" = difftime(tiempoFinal, tiempoComienzo, units = "mins")))
+}
+```
+
+```{r}
+grafPCA <- function(ppca, xPC, yPC){
+  library(ggplot2)
+  
+  # obtenemos los puntos reconstruidos proyectados
+  puntos <- ppca$Y
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PC", xPC, sep = "")
+  nombreEjey <- paste("PC", yPC, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = ppca$Y[xPC,],
+                              nombreEjey = ppca$Y[yPC,])
+  
+    g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, alpha = 0.5, size=3) + xlab(nombreEjex) + ylab(nombreEjey)
+    
+    
+    print(g)
+}
+```
+

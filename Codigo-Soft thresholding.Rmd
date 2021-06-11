@@ -37,21 +37,30 @@ softThreshold <- function(X, tau){
 }
 ```
 
-En segundo lugar, construiremos la función $\texttt{pOmega()}$. Esta función tomará como entrada una matriz $\mathbf{M} \in \mathbb{R}^{m \times n}$, potencialmente con entradas faltantes y construirá el operador $\mathcal{P}_{\Omega}: \mathbb{R}^{m \times n} \to \mathbb{R}^{m \times n}$ que transforma las entradas faltantes de $\mathbf{M}$ en 0, es decir
-
+Dada una matriz $\mathbf{M} \in \R^{d \times n}$ y $\Omega$ el conjunto de índices correspondientes a entradas faltantes, definimos el operador $\mathcal{P}_{\Omega}: \mathbb{R}^{m \times n} \to \mathbb{R}^{m \times n}$ como al operador que transforma todas las entradas desconocidas en $0$, es decir
 \begin{equation*}
     [\mathcal{P}_{\Omega}(\mathbf{M})]_{ij} = \begin{cases}
     \mathbf{M}_{ij} & \text{si } (i,j) \in \Omega \\
     0 & \text{si no}
     \end{cases}
 \end{equation*}
-donde
+Alternativamente, podemos construir una matriz $\mathbf{W} \in \R^{d \times n}$ tal que
 \begin{equation*}
-    \Omega = \{(i,j) \in \{1, \dots, m\} \times \{1, \dots, n\}: \mathbf{M}_{ij} \text{ es una entrada especificada}\}.
+  \mathbf{W}_{ij} = \begin{cases}
+  1 & \text{si }(i,j) \in \Omega \\
+  0 & \text{si no}
+  \end{cases}
+\end{equation*}
+De esta manera, podemos escribir
+\begin{equation*}
+  \mathcal{P}_{\Omega}(\mathbf{M}) = \mathbf{W} \odot \mathbf{M}.
 \end{equation*}
 
+Construiremos la función $\texttt{pOmega()}$. Esta función tomará como entrada una matriz $\mathbf{M} \in \mathbb{R}^{m \times n}$, potencialmente con entradas faltantes, y un parámetro booleano $\texttt{matrizW}$. Si $\texttt{matrizW = TRUE}$ la función devolverá solamente la matriz $\mathbf{W}$ definida anteriormente. De lo contrario, devolverá el resultado $\mathbf{P}_{\Omega}(\mathbf{M})$.
+
+
 ```{r pOmega}
-pOmega <- function(M){
+pOmega <- function(M, matrizW){
   # definimos numero de columnas
   # y de filas
   m <- nrow(M)
@@ -61,9 +70,16 @@ pOmega <- function(M){
   # de unos y ceros
   na_aux <- matrix(as.numeric(!is.na(M)), nrow = m, byrow = F)
   
-  # transformamos los NA de la matrix original en 0s
-  M[is.na(M)] <- 0
-  return(na_aux * M)
+
+  if(matrizW == T){
+    return(na_aux)
+  } else {
+    # transformamos los NA de la matrix original en 0s
+    # para poder hacer el producto de Hadamard
+    M[is.na(M)] <- 0
+    
+    return(na_aux * M)
+  }
 }
 ```
 
@@ -87,18 +103,11 @@ normVec <- function(x) sqrt(sum(x^2))
 
 Podemos, entonces, implementar $\texttt{matrixCompletion()}$:
 ```{r}
-matrixCompletion <- function(M, tau, delta, kappa, eps, maxit, Z0){
+matrixCompletion <- function(M, tau, delta, kappa, eps, maxit, Z0, imp){
 	# definimos numero de columnas
 	# y de filas de M
 	m <- nrow(M)
 	n <- ncol(M)
-
-	# inicializamos la matriz Z de multiplicadores
-	if(missing(Z0)){
-		Z <- matrix(rep(0, times = m*n), nrow = m)
-	} else {
-		Z <- Z0
-	}
 	
 	# definimos delta en caso de que este no este determinado
 	if (missing(delta)){
@@ -109,10 +118,10 @@ matrixCompletion <- function(M, tau, delta, kappa, eps, maxit, Z0){
 	X <- matrix(rep(1, times = m*n), nrow = m)
 
 	# extraemos las entradas conocidas de M
-	M_omega <- pOmega(M)
+	M_omega <- pOmega(M, F)
 
 	# definimos la funcion objetivo
-	objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+	#objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
 
 	# definimos por defecto una cantidad de 
 	# iteraciones igual a 1000
@@ -125,26 +134,125 @@ matrixCompletion <- function(M, tau, delta, kappa, eps, maxit, Z0){
 	if(missing(kappa)){
 	kappa <- 1
 	}
+	  
+	# inicializamos la matriz Z de multiplicadores
+	if(missing(Z0)){
+	  svdM <- svd(M_omega)
+	  k0 <- ceiling(tau/(delta*max(svdM$d)))
+	  print(max(svdM$d))
+		Z <- k0*delta*M_omega
+	} else {
+		Z <- Z0
+	}
 	
-	prev <- normVec(M_omega)
+	objFunction <- normVec(X)+normVec(Z)
+	
+	objFunctionPrev <- +Inf
+	#prev <- normVec(M_omega)
 	for(i in 1:maxit){
-		if(objFunction >= eps){
+	  
+		if(abs(objFunctionPrev - objFunction) >= eps){
+		  objFunctionPrev <- objFunction
 			softThresholdAux <- softThreshold(Z, tau)
 			X <- softThresholdAux$U%*%softThresholdAux$Sigma%*%t(softThresholdAux$V)
-			Z <- Z + delta*(M_omega-pOmega(X))
-			objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+			Z <- Z + delta*(M_omega-pOmega(X, F))
+			
+		  objFunction <- normVec(X)+normVec(Z)
+			#objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+			
 		} else{
 			break
 		}
-	  if (i %% 1e1 == 0){
+	  if (i %% imp == 0){
 			print(i)
-		  print(paste0("Cambio relativo = ", (objFunction - prev)/prev))
+		  print(paste0("Cambio relativo = ", (objFunction - objFunctionPrev)/objFunctionPrev))
 		  print(paste0("Criterio de parada = ", objFunction))
-		  print(paste0("Norma nuclear = ", sum(softThresholdAux$Sigma)))
+		  print(paste0("Norma nuclear = ", tau*sum(softThresholdAux$Sigma) + (1/2)*normVec(X)))
+		  print(paste0("Delta =", delta))
 	  }
 	  prev <- objFunction
 	  
 	  delta <- delta*kappa
+
+	}
+	if(objFunction >= eps){
+	  message("El algoritmo no convergió")
+	}else{
+	  message("El algoritmo convergió")
+	}
+	return(softThresholdAux)
+}
+```
+
+```{r}
+matrixCompletion <- function(M, M_real, tau, delta, kappa, eps, maxit, Z0, imp){
+	# definimos numero de columnas
+	# y de filas de M
+	m <- nrow(M)
+	n <- ncol(M)
+	
+	# definimos delta en caso de que este no este determinado
+	if (missing(delta)){
+	  delta <- (1.2)*(m*n/(sum(!is.na(M))))
+	}
+
+	# inicializamos la matriz X
+	X <- matrix(rep(1, times = m*n), nrow = m)
+
+	# extraemos las entradas conocidas de M
+	M_omega <- pOmega(M, F)
+
+	# definimos la funcion objetivo
+	#objFunction <- normVec(M_omega-pOmega(X))/normVec(M_omega)
+	objFunction <- tau*sum(svd(X)$d) + (1/2)*normVec(X)
+
+	# definimos por defecto una cantidad de 
+	# iteraciones igual a 1000
+	if(missing(maxit)){
+		maxit <- 1000
+	}
+  
+	# definimos la reduccion de los pasos
+	# en caso de que esta no este determinada
+	if(missing(kappa)){
+	kappa <- 1
+	}
+	  
+	# inicializamos la matriz Z de multiplicadores
+	if(missing(Z0)){
+	  svdM <- svd(M_omega)
+	  k0 <- ceiling(tau/(delta*max(svdM$d)))
+	  print(max(svdM$d))
+		Z <- k0*delta*M_omega
+	} else {
+		Z <- Z0
+	}
+	
+	for(i in 1:maxit){
+		if(objFunction >= eps){
+			softThresholdAux <- softThreshold(Z, tau)
+			X <- softThresholdAux$U%*%softThresholdAux$Sigma%*%t(softThresholdAux$V)
+			Z <- Z + delta*(M_omega-pOmega(X, F))
+			objFunction <- normVec(M_omega-pOmega(X, F))/normVec(M_omega)
+			
+		} else{
+			break
+		}
+	  if (i %% imp == 0){
+			print(i)
+		  #print(paste0("Cambio relativo = ", (objFunction - prev)/prev))
+		  print(paste0("Criterio de parada = ", objFunction))
+		  print(paste0("Norma nuclear = ", sum(softThresholdAux$Sigma)))
+		  print(paste0("Delta =", delta))
+		  print(paste("Rango = ", sum(softThresholdAux$Sigma != 0) ))
+		  if(!missing(M_real)){
+		    print(paste("Dife=", normVec(M_real-X)/normVec(M_real)))
+		  }
+	  }
+	  prev <- objFunction
+	  
+	  delta <- delta*kappa
+
 	}
 	if(objFunction >= eps){
 	  message("El algoritmo no convergió")

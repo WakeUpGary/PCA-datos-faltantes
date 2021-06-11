@@ -16,8 +16,7 @@ En la presente sección extraeremos las frecuencias alélicas de una base de dat
 Comencemos por cargar la base de datos. 
 
 ```{r levantar datos del cromosoma}
-crom01 <- read.csv(file = "~/Material/Maestria/Codigo/crom01.csv",
-                   header = F, sep = " ")
+crom01 <- read.csv(file = "crom01.csv", header = F, sep = " ")
 ```
 
 La base de datos cuenta con 146 filas correspondientes a los individuos y 49408 variables, una correspondiente a la población de origen y el resto correspondiente a los SNPs.
@@ -33,7 +32,77 @@ frec_alel <- aggregate(crom01[,-1],
                        by = list(Poblacion = crom01$V1), FUN = mean)
 ```
 
+# Funciones de utilidad
+
+Estaremos interesados en simular pseudohaplotipos en base a vectores de frecuencias alélicas. Con este fin construiremos la función \texttt{simulaInd()} que dado un vector de frecuencias alélicas $p \in \R^d$, simula $n$ individuos de acuerdo a este vector.
+
+```{r}
+simulaInd <- function(p, n){
+  p <- as.numeric(p)
+  d <- length(p)
+  
+  M <- matrix(0, nrow = d, ncol = n)
+  for (j in 1:n){
+    M[, j] <- rbinom(d, size = 1, prob = p)
+  }
+  
+  return(M)
+}
+```
+
+Por otra parte, dados varios vectores de frecuencias alélicas correspondientes a poblaciones distintas, nos interesará simular individuos de cada una de las poblaciones. Por esta razon construiremos la función $\texttt{simulaPob()}$. Esta función tomará como entrada
+
+* una matriz $F \in \R^{k \times d}$ donde $k$ es el número de poblaciones a simular y $d$ es el número de SNPs, y 
+* un número $n$ de individuos por población.
+
+El resultado será una matriz $\mathbf{M} \in \R^{d \times (nk)}$ con los haplotipos simulados.
+
+```{r}
+simulaPob <- function(F, n){
+  k <- nrow(F)
+  d <- ncol(F)
+  
+  M <- matrix(rep(0, times = d*k*n), nrow = d)
+  
+  s <- 1
+  for (i in 1:k){
+    # calculamos la posicion de inicio y del final
+    # de los n individuos simulados
+    posInicio <- ((s-1)*n) + 1
+    posFinal <- s*n
+    
+    M[, posInicio:posFinal] <- simulaInd(p = F[s,], n = n)
+    
+    s <- s+1
+  }
+  
+  return(M)
+}
+```
+
+
+
+
 # Construcción de casos de prueba
+
+## Caso 1: Poblaciones de base con tasa moderada de datos faltantes
+Este caso consiste en la simulación 50 individuos de cada una de las poblaciones de base (por lo tanto $n = 150$) y una cantidad variable de SNPs (esto es, $d$ variable). Construiremos cuatro matrices para estudiar la velocidad de los algoritmos y su capacidad de escalabilidad. Las cuatro matrices corresponderán a $d = 500, d = 1000, d = 5000$ y $d = 10 000$. Para esto fijaremos $d$ posiciones del vector $\texttt{frec_alel}$ y simularemos 150 individuos mediante la función $\texttt{simulaPob()}$. 
+
+```{r}
+set.seed(17)
+
+pos <- sort(sample(2: 49408, replace = F, size = 2000))
+
+caso1 <- simulaPob(frec_alel[,pos[1:2000]], n = 50)
+
+caso1_1 <- limpiarMatriz(caso1[1:250,], indCol = T)$Resultado
+caso1_2 <- limpiarMatriz(caso1[1:500,], indCol = T)$Resultado
+caso1_3 <- limpiarMatriz(caso1[1:1000,], indCol = T)$Resultado
+caso1_4 <- limpiarMatriz(caso1[1:2000,], indCol = T)$Resultado
+
+```
+
+
 
 ## Caso 1: Poblaciones originales y mezcladas con tasa baja de datos faltantes
 El primer caso consiste en simular 100 individuos de cada una de las poblaciones y 150 individuos mezclados. Los individuos mezclados seguirán el siguiente esquema: 50 serán individuos Vasco-Yorubas, 50 serán Vasco-Japoneses y 50 serán Yoruba-Japoneses. A cada uno de los individuos se le aplicará una tasa de datos faltantes variable entre $5\%$ y $50\%$, siendo los $\texttt{NA}$ considerados al azar.
@@ -77,21 +146,7 @@ admixture <- function(n, p){
 }
 ```
 
-A partir de esto podemos construir la matriz con los individuos originales y los mezclados. Para esto construiremos una función que dado un vector de frecuencias alélicas $p \in \R^d$, simule $n$ individuos de acuerdo a este vector.
-
-```{r}
-simulaInd <- function(p, n){
-  p <- as.numeric(p)
-  d <- length(p)
-  
-  M <- matrix(0, nrow = d, ncol = n)
-  for (j in 1:n){
-    M[, j] <- rbinom(d, size = 1, prob = p)
-  }
-  
-  return(M)
-}
-```
+A partir de esto podemos construir la matriz con los individuos originales y los mezclados. 
 
 Construiremos entonces la matriz $\texttt{caso1}$ con las poblaciones mencionadas anteriormente. 
 
@@ -195,7 +250,7 @@ grafPCA_altMin <- function(U, Y, mu, xPCA, yPCA, plotCentr){
   
   puntosGrafica <- data.frame(nombreEjex = Y[xPCA,], 
                               nombreEjey = Y[yPCA, ],
-                              Poblacion = c(rep("Vasco", 100), rep("Japones", 100), rep("Yoruba", 100), rep("Mezcla", 150)))
+                              Poblacion = c(rep("Vasco", 50), rep("Japones", 50), rep("Yoruba", 50), rep("Mezcla", 150)))
   
   
   g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 

@@ -1,0 +1,149 @@
+---
+title: "Codigo-Minimizacion alternada"
+author: "Gerardo Martínez"
+date: "19/12/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\M}{\mathbf{M}}
+\newcommand{\U}{\mathbf{U}}
+\newcommand{\mmu}{\boldsymbol{\mu}}
+
+Sea $\mathbf{M} \in \R^{d \times n}$ una matriz con entradas faltantes y $\Omega$ el conjunto el conjunto de índices correspondientes a entradas conocidas, es decir
+\begin{equation*}
+  \Omega = \{(i,j) \in \{1, \dots, d\} \times \{1, \dots, j\}: (i,j) \text{ es una entrada conocida de } \mathbf{M}\}.
+\end{equation*}
+Construiremos la matriz $\mathbf{W} \in \R^{d \times n}$ tal que
+\begin{equation*}
+  \mathbf{W}_{ij} = \begin{cases}
+  1 & \text{si }(i,j) \in \Omega \\
+  0 & \text{si no}
+  \end{cases}
+\end{equation*}
+Dado un número $p \in \N$ el algoritmo de minimización alternada intenta resolver el problema
+\begin{equation}
+    \begin{aligned}
+& \underset{\mathbf{U} \in \R^{d \times p}, \mathbf{Y} \in \R^{p \times n}}{\text{minimizar}}
+& & \norm{\mathbf{W} \odot (\M - \mmu - \U \mathbf{Y})} \\
+& \text{sujeto a}
+& & \U^{\top} \U = \mathbf{I}_p
+\end{aligned}
+\end{equation}
+
+```{r pOmega}
+pOmega <- function(M){
+	# definimos numero de columnas
+	# y de filas
+	m <- nrow(M)
+	n <- ncol(M)
+
+	# construimos una matriz auxiliar
+	# de unos y ceros
+	na_aux <- matrix(as.numeric(!is.na(M)), nrow = m, byrow = F)
+	
+	# transformamos los NA de la matrix original en 0s
+	# para poder hacer el producto de Hadamard
+	M[is.na(M)] <- 0
+	
+	return(list("W" = na_aux, "pOmega" = na_aux * M))
+}
+```
+
+```{r}
+normVec <- function(x) sqrt(sum(x^2))
+```
+
+
+```{r minimizacion alternada}
+altMin <- function(X, p, eps, maxit, evalHis){
+	# transformaremos todas las entradas faltantes de X en 0
+	pOmegaX <- pOmega(X)
+	X <- pOmegaX$pOmega
+	d <- nrow(X)
+	n <- ncol(X)
+
+	# calculamos la matriz W
+	W <- pOmegaX$W
+	
+	rm(pOmegaX)
+
+	# inicializamos U e Y
+	U <- matrix(rnorm(d*p), nrow = d)
+	Y <- matrix(rnorm(p*n), nrow = p)
+
+	# inicializamos el iterador
+	k <- 1
+
+	tiempoComienzo <- Sys.time()
+	
+	prodAnt <- matrix(rep(+Inf, d*n), nrow = d)
+	prodNuevo <- U%*%Y
+
+	funcObj <- normVec(prodAnt - prodNuevo)
+	
+	if(missing(evalHis)){
+		evalHis <- FALSE
+	}
+	
+	if(evalHis == TRUE){
+		eval <- funcObj
+	}
+	
+	while((funcObj > eps) & (k < maxit)){
+		print(paste("Iteración:",k, "||", "Función objetivo: ", funcObj))
+		
+		prodAnt <- prodNuevo
+		
+		mu <- apply(W * (X - prodAnt), FUN = sum, MARGIN = 1)/apply(W, FUN = sum, MARGIN = 1)
+		
+		for (i in 1:d){
+			matrizAuxU <- solve(Y %*% diag(W[i,]) %*% t(Y))
+			valorAuxU <- apply(Y %*% diag(W[i,] * (X[i,] - mu[i])), MARGIN = 1, FUN = sum)
+			U[i, ] <- matrizAuxU %*% valorAuxU
+		}
+		
+		qrAux <- qr(U)
+		U <- qr.U(qrAux)[,1:p]
+		
+		
+		for (j in 1:n){
+			matrizAuxY <- solve(t(U) %*% diag(W[,j]) %*% U)
+			valorAuxY <- rep(0, p)
+			for (i in 1:d){
+				valorAuxY <- valorAuxY + W[i,j] * (X[i,j] - mu[i]) * U[i,]
+			}
+			
+			Y[, j] <- matrizAuxY %*% valorAuxY
+		}
+		
+		prodNuevo <- U%*%Y
+		
+		funcObj <- normVec(prodAnt - prodNuevo)
+		
+		if(evalHis == TRUE){
+			eval <- c(eval, funcObj)
+		}
+		
+		k <- k+1
+	}
+
+	tiempoFinal <- Sys.time()
+
+	if (k > maxit){
+		warning("El algoritmo no convergió")
+		message(paste("Error relativo", normVec(mu.aux - mu)))
+	} else{
+		message(paste("El algoritmo convergió en", k, "iteraciones. Tiempo hasta la convergencia:", difftime(tiempoFinal, tiempoComienzo, units = "mins")))
+	}
+
+	unos <- matrix(rep(1, n), nrow = n)
+	return(list(mu = mu - (1/n)*U%*%Y%*%unos, 
+				U = U, 
+				Y= Y%*%(diag(n)- (1/n)*unos %*% t(unos))))
+}	
+```
+

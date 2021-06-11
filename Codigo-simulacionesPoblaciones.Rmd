@@ -1,0 +1,484 @@
+---
+title: "Simulacion de poblaciones"
+author: "Gerardo Martínez"
+date: "18/8/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+\newcommand{\M}{\mathbf{M}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+
+# Simulación de poblaciones con datos faltantes
+## Construcción de la matriz sin datos faltantes
+Simularemos tres poblaciones con 100 individuos cada uno. Para cada inviduo se simularán dies posiciones del genoma independientes según una distribución de Bernoulli de parámetro $p \in (0,1)$. 
+
+En primer lugar, simulemos $30 \, 000$ variables aleatorias uniformes en $[0,1]$ correspondientes a los parámetros $p$ que utilizaremos luego para obtener las posiciones del genoma de los individuos.
+
+```{r generacion de p}
+pPosiciones <- runif(n = 30000)
+```
+
+A continuación, construiremos una matriz $\mathbf{M}$ con $150$ columnas (correspondientes a los individuos) y $10 \, 000$ filas (correspondientes a las posiciones del genoma). Esta matriz será completada con el resultado de las simulaciones. Para obligar a R a destinar una porción de memoria a $\mathbf{M}$, definiremos $M_{ij} \leftarrow 0$ para todo $i,j$.  
+
+```{r construccion matriz}
+M <- matrix(rep(0, times = 150 * 10000), ncol = 150)
+```
+
+Por último, completaremos la matriz de acuerdo a los $p$ anteriormente definidos.
+```{r}
+for (i in 1:10000){
+	for (j in 1:150){
+		if ((1 <= j) & (j< 51)){
+			M[i, 1:50] <- rbinom(n = 50, size = 1, prob = pPosiciones[1*j])
+		}
+		if ((51 <= i) & (i< 101)){
+			M[i, 51:100] <- rbinom(n = 50, size = 1, prob = pPosiciones[2*j])
+		}
+		if ((101 <= i) & (i< 151)){
+			M[i, 101:150] <- rbinom(n = 50, size = 1, prob = pPosiciones[3*j])
+		}
+	}
+}
+```
+
+## Creación de datos faltantes
+### Datos faltantes no estructurados
+
+El primer tipo de datos faltantes que construiremos es el de datos faltantes no estructurados. En este tipo, las entradas de la matriz pueden ser un dato faltante de acuerdo a una variable aleatoria de Bernoulli con un parámetro $p \in (0,1)$ prefijado. Además, la existencia o no de un dato faltante en una entrada, es independiente del resto de lo que ocurre en el resto de las entradas.
+
+Esta construcción será a través de la función $\texttt{hacerNA()}$ que tomará como parámetros una matriz $\mathbf{M} \in \R^{m \times n}$ y una proporción $p \in (0,1)$ que corresponde con la proporción de datos faltantes que se quiera fabricar. La función simulará, para cada entrada de la matriz $\mathbf{M}$, una variable aleatoria Bernoullí de parámetro $p$. 
+
+```{r hacerNA()}
+hacerNA <- function(M, p){
+  # se fuerza a M a ser matriz en caso de que M sea,
+  # por ejemplo, un data frame
+  M <- as.matrix(M)
+  
+  # se obtiene el número de filas y columnas de M
+  m <- nrow(M)
+  n <- ncol(M)
+  
+  # se construye una matriz aleatoria auxiliar
+  # con entradas Bernoulli de parametro p
+  mNA <- matrix(rbinom(n = n*m, size = 1, prob = p),
+                ncol = n)
+  
+  # si la entrada (i,j) de la matriz mNA es 1
+  # transformaremos la entrada (i,j) de la matriz M en un dato faltante
+  for (i in 1:m){
+    for (j in 1:n){
+      if (mNA[i,j] == 1){
+        M[i,j] <- NA 
+      }
+    }
+  }
+
+  return(M)
+}
+```
+
+### Datos faltantes en bloques
+
+Es posible que los datos faltantes no ocurran de forma independiente si no que en cada fila hayan bloques de datos faltantes contiguos. A continuación, modelaremos esta situación.
+
+La función que construiremos con este objetivo es $\texttt{hacerNAbloque()}$. La función, en este caso tomará tres parámetros: la matriz $\mathbf{M} \in \R^{m \times n}$ y dos cantidades $p, \theta \in (0,1)$. El parámetro $p \in (0,1)$ controla la proporción de datos faltantes en el total de la matriz. Para construir tiras de datos faltantes se simularán $X_1, \dots, X_n$ variables aleatorias independientes e idénticamente distribuidas de $X \sim \text{Geo}(\theta)$ con $\E(X) = \frac{1}{\theta}$. El parámetro $\theta$ es, entonces, el inverso del largo esperado de las tiras de datos faltantes.
+
+```{r hacerNAbloque())}
+hacerNAbloque <- function(M, p, theta){
+  # se fuerza a M a ser matriz en caso de que M sea,
+  # por ejemplo, un data frame
+  M <- as.matrix(M)
+  
+  # se obtiene el número de filas y columnas de M
+  m <- nrow(M)
+  n <- ncol(M)
+  
+  # se obtiene el número aproximado de datos faltantes
+  n_missing <- round(p*n*m)
+  
+  # se construye una variable r que contiene el numero
+  # de posiciones a partir de las cuales se obtendran
+  # bloques de datos faltantes
+  r <- round(n_missing*theta)
+  
+  # se vectoriza la matriz
+  vectorTotal <- as.vector(M)
+  
+  # se sortean las posiciones de donde parten los bloques
+  # de datos faltantes
+  posicionesInicio <- sort(sample(x = 1:(n*m), size = r, replace = F))
+  
+  # se construyen los bloques de datos faltantes
+  # segun una distribucion geometrica de parametro theta
+  for (i in posicionesInicio){
+    geo <- rgeom(n = 1, prob = theta) + 1
+    
+    if (i + geo <= n*m){
+    vectorTotal[i:(i+geo)] <- NA
+    } else{
+      vectorTotal[i:(n*m)] <- NA
+    }
+  }
+  
+  return(matrix(vectorTotal, byrow = F, nrow = m))
+}
+```
+
+### Datos faltantes por individuos
+
+La proporción (o cantidad absoluta) de datos faltantes puede no ser igual para cada individuo. Crearemos, a continuación, datos faltantes para cada individuo con proporciones (potencialmente) diferentes.
+
+La función a implementar es $\texttt{hacerNAindividuo()}$. La función tomará los siguientes parámetros como entradas:
+
+* Una matriz $\mathbf{M} \in \R^{m \times n}$.
+* Un parámetro $\texttt{indCol}$ binario que valdrá $\texttt{TRUE}$ si los individuos son las columnas de la matriz $\mathbf{M}$ o $\texttt{FALSE}$ si los individuos son las filas. Por defecto, se pensará a la matriz $\mathbf{M}$ teniendo a sus columnas como los individuos y a las filas como las variables.
+* Un vector $\texttt{p_vec}$ del mismo largo que la cantidad de individuos considerados. Este vector tendrá en la entrada $i$-ésima la proporción de datos faltantes que se construirán para el individuo $i$-ésimo. Por esta razón, cada una de las entradas de $\texttt{p_vec}$ debe ser un valor numérico entre $0$ y $1$.
+* Un valor $p \in [0,1]$. Este valor corresponde con el caso en que se quiera eliminar una proporción $p$ fija de entradas para todos los individuos. En caso de que se proporcione un valor para $\texttt{propNA}$, se tomará este último. De lo contrario, se utilizará el valor de $p$.
+
+```{r hacerNAindividuo()}
+hacerNAindividuo <- function(M, indCol, p_vec, p){
+	# se fuerza a M a ser matriz en caso de que M sea,
+	# por ejemplo, un data frame
+	M <- as.matrix(M)
+
+	# se obtiene el número de filas y columnas de M
+	m <- nrow(M)
+	n <- ncol(M)
+
+	if(missing(indCol)){
+		indCol <- T
+	}
+
+	if(indCol == T){
+		if(missing(p_vec)){
+			if(missing(p)){
+				stop("Proporcionar un valor para p_vec o para p")
+			} else {
+				p_vec <- rep(p, n)
+			}
+		}
+		
+		for (j in 1:n){
+			cantNA <- floor(m * p_vec[j])
+			vecNA <- sample(x = 1:m, size = cantNA, replace = FALSE)
+			
+			M[vecNA, j] <- NA
+		}
+	} else{
+		if(missing(p_vec)){
+			if(missing(p)){
+				stop("Proporcionar un valor para p_vec o para p")
+			} else {
+				p_vec <- rep(p, m)
+			}
+		}
+		
+		for (i in 1:m){
+			cantNA <- floor(m * p_vec[i])
+			vecNA <- sample(x = 1:n, size = cantNA, replace = FALSE)
+			
+			M[j, vecNA] <- NA
+		}
+	}
+	return(M)
+}
+
+```
+
+
+## Funciones de limpieza y centrado de la matriz simulada
+
+Es posible que en la construcción de las matrices con datos faltantes, se obtengan columnas enteras (correspondientes a posiciones del genoma) con datos faltantes. También puede ocurrir que para una columna, todas las filas tengan la misma entrada (esto es, todos las entradas iguales a 0 o 1). Estas últimas corresponderían a posiciones del genoma que son invariables entre los individuos y por lo tanto no son útiles para estudiar la estructura de las poblaciones. Por esta razón construiremos una función que descarte estas columnas.
+
+La función implementada es $\texttt{limpiarMatriz()}$. Esta toma como parámetro de entrada una matriz $\mathbf{M} \in \R^{m \times n}$ cuyas columnas corresponden a observaciones y las filas a variables y devuelve la matriz $\tilde{\M} \in \R^{m \times q}$ con $q \leq n$ sin aquellas filas que no son útiles. Será necesario también establecer si los individuos son las filas o las columnas de la matriz; esto está determinado por el parámetro $\texttt{indCol}$ que tomará el valor $\texttt{TRUE}$ si los individuos son vectores columnas y $\texttt{FALSE}$ si no. En caso de que hayan sido borradas algunas filas, la función también devolverá un vector, $\texttt{indices}$, con el índice de las filas que fueron borradas.
+
+```{r limpiarMatriz()}
+limpiarMatriz <- function(M, indCol){
+	M <- as.matrix(M)
+	m <- nrow(M)
+	n <- ncol(M)
+
+	indiceBorrar <- c()
+
+	if(indCol == T){
+		for (i in 1:m){
+			if (sum(is.na(M[i,])) == n){
+				indiceBorrar <- c(indiceBorrar, i)
+			} else {
+				if ((mean(M[i,], na.rm = T) == 1) | (mean(M[i,], na.rm = T) == 0)){
+					indiceBorrar <- c(indiceBorrar, i)
+				}
+			}
+		}
+		
+		if (length(indiceBorrar)!=0){
+			return(list("Resultado" = M[-indiceBorrar,,drop = FALSE], "indices" = indiceBorrar))
+		}
+		else{
+			return(list("Resultado" = M, "indices" = c()))
+		}
+	} else {
+		for (j in 1:n){
+			if (sum(is.na(M[,j])) == m){
+				indiceBorrar <- c(indiceBorrar, j)
+			} else {
+				if ((mean(M[,j], na.rm = T) == 1) | (mean(M[,j], na.rm = T) == 0)){
+					indiceBorrar <- c(indiceBorrar, j)
+				}
+			}
+		}
+		
+		if (length(indiceBorrar)!=0){
+			return(list("Resultado" = M[,-indiceBorrar, drop = FALSE], "indices" = indiceBorrar))
+		}
+		else{
+			return(list("Resultado" = M, "indices" = c()))
+		}
+	}
+}
+```
+
+El análisis de componentes principales obtenido tras la completación de la matriz se hará de acuerdo a lo expresado en el artículo \textit{Population Structure and Eigenanalysis} (Patterson, Price, y Reich, 2006). La matriz $\mathbf{M} = (m_{ij})$, sin las columnas no deseadas, será normalizada como
+\begin{equation}
+  m_{ij} \leftarrow \frac{m_{ij} - \mu_j}{\sqrt{\mu_j(1-\mu_j)}}, \quad \mu_j = \sum_{i = 1}^m m_{ij}
+\end{equation}
+
+```{r centrarMatriz()}
+centrarMatriz <- function(M, indCol){
+	M <- as.matrix(M)
+	m <- nrow(M)
+	n <- ncol(M)
+
+	if (indCol == T){
+		for (i in 1:m){
+			p <- mean(M[i,], na.rm = T)
+			for (j in 1:n){
+				if (!is.na(M[i,j])){
+					M[i,j] <- (M[i,j]-p)/sqrt(p*(1-p))
+				}
+			}
+		}
+	} else {
+		for (j in 1:n){
+			p <- mean(M[,j], na.rm = T)
+			for (i in 1:m){
+				if (!is.na(M[i,j])){
+					M[i,j] <- (M[i,j]-p)/sqrt(p*(1-p))
+				}
+			}
+		}
+	}
+	return(M)
+}
+```
+
+# Construcción de la funcion simulaPob()
+
+Construiremos una función llamada $\texttt{simulaPob()}$ que tome como entrada los siguientes parámetros:
+
+* La cantidad de poblaciones simuladas, $k$.
+* La cantidad de individuos por poblacion $n$.
+* La cantidad de alelos por individuo $d$.
+* Un parámetro $\texttt{metodo}$ que tendrá tres configuraciones de acuerdo al tipo de datos faltantes que se quiera simular. $\texttt{uniforme}$ creará datos faltantes de acuerdo a una proporción $p$ y según la función $\texttt{hacerNA()}$. $\texttt{bloque}$ generará datos faltantes por bloques según la función $\texttt{hacerNAbloque}. $\texttt{individuo}$ creará datos faltantes por individuo según la función $\texttt{hacerNAindividuo}.
+* La proporción de datos faltantes $p \in [0,1]$. 
+* El largo esperado de bloques con datos faltantes $\theta$ en caso de que $\texttt{metodo = "bloque"}$.
+* La cantidad de datos faltantes por individuo $\texttt{p_vec}$ en caso de que $\texttt{metodo = "individuo"}$. Si no se provee un valor, deberá proveerse un valor para $p$.
+
+La función devolverá una matriz $\mathbf{M} \in \R^{d \times h}$ donde $h \leq nk$ con $k$ poblaciones simuladas de $n$ individuos cada una según las ideas expresadas en las secciones anteriores. La matriz $\mathbf{M}$ será centrada y limpiada según las funciones de limpieza detalladas en el apartado ''Funciones de limpieza y centrado de la matriz simulada''. Por esta razón, el número $h$ de columnas puede ser igual o menor a $nk$ (es decir, puede haber columnas que hayan sido borradas). Adicionalmente, la función devolverá el conjunto de índices de aquellas columnas que fueron borradas por la función $\texttt{limpiarMatriz()}$.
+
+```{r simulaPob()}
+simulaPob <- function(k, n, d, metodo, p, theta, p_vec){
+	pPosiciones <- runif(n = k*d)
+	M <- matrix(rep(0, times = n*k*d), ncol = k*n)
+
+	pobIndice <- rep(x = 1:k, each = n)
+
+	for (i in 1:d){
+		for (j in 1:(n*k)){
+			auxInicio <- ((pobIndice[j]-1)*n) + 1
+			auxFinal <- pobIndice[j]*n
+			
+			M[i, auxInicio:auxFinal] <- rbinom(n = n, 
+			                                  size = 1, 
+			                                  prob = pPosiciones[pobIndice[j]*i])
+		}
+	}
+	
+	if(metodo == "uniforme"){
+	  M_na <- hacerNA(M, p)
+	} 
+	
+	if (metodo == "bloque"){
+	  M_na <- hacerNABloque(M, p, theta)
+	}
+	
+	if (metodo == "individuo"){
+	  M_na <- hacerNAindividuo(M, p_vec = p_vec)
+	}
+	
+	mLimp <- limpiarMatriz(M_na, indCol = T)
+	#mCentrado <- centrarMatriz(mLimp$Resultado, indCol = T)
+	
+	return(list("matriz_original" = M, "matriz_na" = mLimp$Resultado, "indices" = mLimp$indices))
+}
+```
+
+# Grafico de las poblaciones reconstruidas
+En la siguiente sección construiremos una función que nos permita graficar la proyección en dos componentes principales de la matriz simulada original y de la matriz reconstruida mediante algún algoritmo de completación de matrices.
+
+La función construida será $\texttt{grafPCA()}$. Esta tendrá los siguientes parámetros de entrada
+
+* la matriz original, $\mathbf{M} \in \R^{d \times n}$ de individuos simulados (estas, por ejemplo, obtenidas de la función $\texttt{simulaPob()}$) sin datos faltantes,
+* las matrices $\mathbf{U}$, $\boldsymbol{\Sigma}$ y $\mathbf{V}$ tales que $\tilde{\mathbf{M}} = \mathbf{U} \boldsymbol{\Sigma} \mathbf{V}^{\top}$ donde $\mathbf{M}$ es la reconstrucción de $\mathbf{M}$ con algún algoritmo de completación de matrices,
+* el numero de poblaciones graficadas, $k$,
+* el numero de individuos por población, $n$,
+* el parámetro $\texttt{xPCA}$ que indica cuál primer componente principal deberá ser graficada en el eje horizontal,
+* el parámetro $\texttt{yPCA}$ que indica cuál segundo componente principal deberá ser graficado en el eje vertical.
+
+```{r}
+grafPCA <- function(M, U, Sigma, V, k, n, xPCA, yPCA, plotCentr){
+  library(ggplot2)
+  
+  # obtenemos los valores de M
+  # proyectados en las componentes principales
+  
+  mProyectado <- t(U) %*% M
+  
+  # obtenemos los puntos reconstruidos proyectados
+  puntos <- Sigma %*% t(V)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PCA", xPCA, sep = "")
+  nombreEjey <- paste("PCA", yPCA, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = c(puntos[xPCA,], mProyectado[xPCA,]),
+                              nombreEjey = c(puntos[yPCA, ], mProyectado[yPCA,]),
+                              Poblacion = rep(rep(as.character(1:k), each = n), 2),
+                              Punto = rep(c("Reconstruido", "Original"), each = n*k))
+  #names(puntosGrafica[,1:2]) <- c(nombreEjex, nombreEjey)
+  
+  if(plotCentr == T){
+    centroide <- aggregate(puntosGrafica[,1:2], by = list(puntosGrafica$Poblacion, puntosGrafica$Punto), FUN = mean)
+    colnames(centroide) <- c("Poblacion", "Punto", "nombreEjex", "nombreEjey")
+    
+    g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, aes(col=Poblacion, shape = Punto), alpha = 0.5, size=3) +
+    geom_point(data = centroide, aes(shape = Punto)) + xlab(nombreEjex) + ylab(nombreEjey)
+    
+    
+    print(g)
+    
+  } else{
+    g <- ggplot(puntosGrafica, aes(x=nombreEjex, y=nombreEjey)) + 
+  geom_point(aes(col=Poblacion, shape = Punto, alpha = 0.4), size=3) + xlab(nombreEjex) + ylab(nombreEjey)
+  print(g)
+  }
+}
+```
+
+```{r}
+centroidePCA <- function(M, U, Sigma, V, k, n, xPCA, yPCA){
+  # obtenemos los valores de M
+  # proyectados en las componentes principales
+  
+  mProyectado <- t(U) %*% M
+  mProyectado <- data.frame(t(mProyectado[c(xPCA, yPCA),]), Poblacion = rep(as.character(1:k), each = n))
+  
+  centroidesOriginal <- aggregate(mProyectado[,-3], by = list(mProyectado$Poblacion), FUN = mean)
+  
+  # obtenemos los puntos reconstruidos proyectados
+  puntos <- Sigma %*% t(V)
+  puntos <- data.frame(t(puntos[c(xPCA, yPCA),]), Poblacion = rep(as.character(1:k), each = n))
+  
+  centroidesReconstruido <- aggregate(puntos[,-3], by = list(mProyectado$Poblacion), FUN = mean)
+  
+  # centroide <- matrix(0, nrow = 4, ncol = k)
+  ratios <- rep(0, k)
+  
+  for(i in 1:k){
+    ratios[i] <- normVec(centroidesOriginal[i, 2:3])/normVec(centroidesReconstruido[i, 2:3])
+  }
+  plot(x = 1:k, y = ratios, xlab = "Poblacion", ylab = "Razon")
+}
+```
+
+grafPCA(M = pob02_original, 
+        U = pob02_U,
+        Sigma = pob02_Sigma,
+        V = pob02_V,
+        k = 4,
+        n = 100,
+        xPCA = 1,
+        yPCA = 2)
+        
+
+        
+centroidePCA(M = centrarMatriz(pob02_original), 
+        U = pob02_U,
+        Sigma = pob02_Sigma,
+        V = pob02_V,
+        k = 4,
+        n = 100,
+        xPCA = 1,
+        yPCA = 2)
+
+```{r}
+razonesHomotecias <- function(n, p, theta){
+	rep <- c()
+	
+	for (i in 1:n){
+		print(i)
+		      
+		pPosiciones <- runif(n = 30000)
+		
+		M <- matrix(rep(0, times = 150 * 10000), nrow = 150)
+		
+		for (j in 1:10000){
+			for (i in 1:150){
+				if ((1 <= i) & (i< 51)){
+					M[1:50, j] <- rbinom(n = 50, size = 1, prob = pPosiciones[1*j])
+				}
+				if ((51 <= i) & (i< 101)){
+					M[51:100, j] <- rbinom(n = 50, size = 1, prob = pPosiciones[2*j])
+				}
+				if ((101 <= i) & (i< 151)){
+					M[101:150, j] <- rbinom(n = 50, size = 1, prob = pPosiciones[3*j])
+				}
+			}
+		}
+		
+		mNA <- hacerNABloque(M, p, theta)
+		
+		mLimp <- limpiarMatriz(M)
+		
+		mCentrado <- centrarMatriz(mLimp$Resultado)
+		
+		mCompletacion <- matrixCompletion(M = mCentrado,
+											tau = 1e5, 
+											delta = 0.1, 
+											eps = 1e-5,
+											maxit = 1e6)
+											
+		US <- mCompletacion$U %*% mCompletacion$Sigma
+		V <- t(mCompletacion$V)
+		
+		if (length(mLimp$indices) == 0){
+			datosProyectados <- M %*% t(V)
+		}else{
+			datosProyectados <- M[, -mLimp$indices]%*%t(V)
+		}
+		
+		matrizAux <- cbind(US[,1:2], datosProyectados[,1:2])
+		
+		for (k in 1:150){
+			ratioK <- normVec(US[k,1:2])/normVec(datosProyectados[k,1:2])
+			rep <- c(rep, ratioK)
+		}
+	}
+	return(rep)
+}
+```
+
