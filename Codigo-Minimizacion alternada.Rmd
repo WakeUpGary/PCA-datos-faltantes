@@ -9,47 +9,45 @@ editor_options:
 \newcommand{\norm}[1]{\left\lVert#1\right\rVert}
 \newcommand{\R}{\mathbb{R}}
 \newcommand{\N}{\mathbb{N}}
-\newcommand{\M}{\mathbf{M}}
+\newcommand{\X}{\mathbf{X}}
 \newcommand{\U}{\mathbf{U}}
 \newcommand{\mmu}{\boldsymbol{\mu}}
 
-Sea $\mathbf{M} \in \R^{d \times n}$ una matriz con entradas faltantes y $\Omega$ el conjunto el conjunto de índices correspondientes a entradas conocidas, es decir
-\begin{equation*}
-  \Omega = \{(i,j) \in \{1, \dots, d\} \times \{1, \dots, j\}: (i,j) \text{ es una entrada conocida de } \mathbf{M}\}.
-\end{equation*}
-Construiremos la matriz $\mathbf{W} \in \R^{d \times n}$ tal que
-\begin{equation*}
-  \mathbf{W}_{ij} = \begin{cases}
-  1 & \text{si }(i,j) \in \Omega \\
+El siguiente artículo mostrará cómo construir las funciones para resolver el problema de ACP con datos faltantes a través del algoritmo de minimización alternada.
+
+Sea $\X \in \R^{d \times n}$ una matriz con entradas faltantes. Notemos con $\Omega$ al conjunto de índices de entradas conocidas de la matriz $\X$, es decir, 
+\begin{equation}
+(i,j) \in \Omega \Leftrightarrow x_{ij} \text{ es conocida}.
+\end{equation}
+Asociado al conjunto $\Omega$, definamos a la matriz $\mathbf{W}$ tal que
+\begin{equation}
+  (\mathbf{W})_{ij} = \begin{cases}
+  1 & \text{si } (i,j) \in \Omega \\
   0 & \text{si no}
   \end{cases}
-\end{equation*}
-Dado un número $p \in \N$ el algoritmo de minimización alternada intenta resolver el problema
+\end{equation}
+y el operador $\mathcal{P}_{\Omega}$ tal que
 \begin{equation}
-    \begin{aligned}
-& \underset{\mathbf{U} \in \R^{d \times p}, \mathbf{Y} \in \R^{p \times n}}{\text{minimizar}}
-& & \norm{\mathbf{W} \odot (\M - \mmu - \U \mathbf{Y})} \\
-& \text{sujeto a}
-& & \U^{\top} \U = \mathbf{I}_p
-\end{aligned}
+  \mathcal{P}_{\Omega} = \mathbf{W} \odot \X.
 \end{equation}
 
+Construiremos en primer lugar la función $\texttt{pOmega()}$ que tomará como entrada una matriz $\X$ con datos faltantes y devolverá tanto la matriz $\mathbf{W}$ como $\mathcal{P}(\Omega)$.
 ```{r pOmega}
-pOmega <- function(M){
+pOmega <- function(X){
 	# definimos numero de columnas
 	# y de filas
-	m <- nrow(M)
-	n <- ncol(M)
+	m <- nrow(X)
+	n <- ncol(X)
 
 	# construimos una matriz auxiliar
 	# de unos y ceros
-	na_aux <- matrix(as.numeric(!is.na(M)), nrow = m, byrow = F)
+	na_aux <- matrix(as.numeric(!is.na(X)), nrow = m, byrow = F)
 	
 	# transformamos los NA de la matrix original en 0s
 	# para poder hacer el producto de Hadamard
-	M[is.na(M)] <- 0
+	X[is.na(X)] <- 0
 	
-	return(list("W" = na_aux, "pOmega" = na_aux * M))
+	return(list("W" = na_aux, "pOmega" = na_aux * X))
 }
 ```
 
@@ -59,18 +57,17 @@ normVec <- function(x) sqrt(sum(x^2))
 
 
 ```{r minimizacion alternada}
-altMin <- function(X, p, eps, maxit, evalHis){
-	# transformaremos todas las entradas faltantes de X en 0
+altMin <- function(X, p, eps, maxit, impr, evalHis){
 	pOmegaX <- pOmega(X)
+	
 	X <- pOmegaX$pOmega
-	d <- nrow(X)
-	n <- ncol(X)
-
-	# calculamos la matriz W
 	W <- pOmegaX$W
 	
 	rm(pOmegaX)
-
+	
+	d <- nrow(X)
+	n <- ncol(X)
+	
 	# inicializamos U e Y
 	U <- matrix(rnorm(d*p), nrow = d)
 	Y <- matrix(rnorm(p*n), nrow = p)
@@ -83,18 +80,29 @@ altMin <- function(X, p, eps, maxit, evalHis){
 	prodAnt <- matrix(rep(+Inf, d*n), nrow = d)
 	prodNuevo <- U%*%Y
 
-	funcObj <- normVec(prodAnt - prodNuevo)
+	funcObj <- normVec(prodAnt - prodNuevo)/normVec(prodNuevo+1e-8)
+	
+	if(missing(maxit)){
+	  maxit <- 1e3
+	}
 	
 	if(missing(evalHis)){
 		evalHis <- FALSE
 	}
 	
 	if(evalHis == TRUE){
-		eval <- funcObj
+		eval <- c()
+	}
+	
+	if(missing(impr)){
+		impr <- 10
 	}
 	
 	while((funcObj > eps) & (k < maxit)){
-		print(paste("Iteración:",k, "||", "Función objetivo: ", funcObj))
+	  if(k %% impr == 0){
+            print(paste("Iteracion =", k))
+            print(paste("Error relativo =", funcObj))
+    }
 		
 		prodAnt <- prodNuevo
 		
@@ -107,7 +115,7 @@ altMin <- function(X, p, eps, maxit, evalHis){
 		}
 		
 		qrAux <- qr(U)
-		U <- qr.U(qrAux)[,1:p]
+		U <- qr.Q(qrAux)[,1:p]
 		
 		
 		for (j in 1:n){
@@ -122,7 +130,7 @@ altMin <- function(X, p, eps, maxit, evalHis){
 		
 		prodNuevo <- U%*%Y
 		
-		funcObj <- normVec(prodAnt - prodNuevo)
+		funcObj <- normVec(prodAnt - prodNuevo)/normVec(prodNuevo+1e-8)
 		
 		if(evalHis == TRUE){
 			eval <- c(eval, funcObj)
@@ -135,7 +143,7 @@ altMin <- function(X, p, eps, maxit, evalHis){
 
 	if (k > maxit){
 		warning("El algoritmo no convergió")
-		message(paste("Error relativo", normVec(mu.aux - mu)))
+		message(paste("Error relativo", funcObj))
 	} else{
 		message(paste("El algoritmo convergió en", k, "iteraciones. Tiempo hasta la convergencia:", difftime(tiempoFinal, tiempoComienzo, units = "mins")))
 	}
@@ -143,7 +151,145 @@ altMin <- function(X, p, eps, maxit, evalHis){
 	unos <- matrix(rep(1, n), nrow = n)
 	return(list(mu = mu - (1/n)*U%*%Y%*%unos, 
 				U = U, 
-				Y= Y%*%(diag(n)- (1/n)*unos %*% t(unos))))
-}	
+				Y = Y%*%(diag(n)- (1/n)*unos %*% t(unos)),
+				evol = eval,
+				tiempoEjec = difftime(tiempoFinal, tiempoComienzo, units = "mins"),
+				iter = k))
+}
 ```
 
+```{r}
+grafPCA_altMin <- function(U, Y, mu, xPC, yPC, plotCentr){
+  library(ggplot2)
+  
+  U <- as.matrix(U)
+  Y <- as.matrix(Y)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PC", xPC, sep = "")
+  nombreEjey <- paste("PC", yPC, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = Y[xPC,], 
+                              nombreEjey = Y[yPC, ],
+                              Population = factor(c(rep("Basque", 20), rep("Japanese", 20), rep("Yoruba", 20), rep("Admixed", 150)), 
+                              levels = c("Basque", "Japanese", "Yoruba", "Admixed")))
+
+
+g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+  geom_point(data = puntosGrafica, aes(col=Population), alpha = 1, size=2) +
+  scale_color_manual(values=c("#D71E18", "#2000E0", "#68AC23", "#000000")) + xlab(nombreEjex) + ylab(nombreEjey)
+
+print(g)
+
+}
+```
+
+```{r}
+slpca <- function(X, p, eps, maxit, gamma, evalHis, l){
+  pOmegaX <- pOmega(X)
+	
+	X <- pOmegaX$pOmega
+	W <- pOmegaX$W
+	  
+	rm(pOmegaX)
+	
+  d <- nrow(X)
+  n <- ncol(X)
+  
+  # inicializamos U e Y
+  U_ant <- matrix(rep(Inf, d*p), nrow = d)
+  Y_ant <- matrix(rep(Inf, p*n), nrow = p)
+  
+  svdX <- svd(X)
+  #U_nuevo <- matrix(rnorm(d*p), nrow = d)
+  Y_nuevo <- matrix(rnorm(p*n), nrow = p)
+  U_nuevo <- svdX$u[,1:p]
+  
+  k <- 1
+  
+  funcObj_viejo <- +Inf
+  
+  tiempoComienzo <- Sys.time()
+  
+  if(missing(evalHis)){
+		evalHis <- FALSE
+	}
+	
+	if(evalHis == TRUE){
+		eval <- c()
+	}
+  
+  funcObj_nuevo <- normVec(X-W *(U_nuevo %*% Y_nuevo))
+  
+  while((funcObj_nuevo > eps) & (k <= maxit)){
+    if (funcObj_viejo >= funcObj_nuevo){
+        gamma <- gamma*(1.1)
+    } else{
+      gamma <- gamma/2
+    }
+    
+    #if (funcObj_viejo < funcObj_nuevo){
+    #    gamma <- gamma*(0.9)
+    #}
+    
+    funcObj_viejo <- funcObj_nuevo
+    print(paste("Iteración =",k, "||", "Valor objetivo =", funcObj_nuevo/(9000)))
+    
+    U_ant <- U_nuevo
+    Y_ant <- Y_nuevo
+    
+    U_nuevo <- U_ant + gamma*((X - W*(U_ant %*% Y_ant)) %*% t(Y_ant) - l* U_ant)
+    
+    #for (j in 1:p){
+    #  U_nuevo[,j] <- U_nuevo[,j]*(1/max(1, normVec(U_nuevo[,j])))
+    #}
+    Y_nuevo <- Y_ant + gamma* (t(U_ant) %*% (X - W*(U_ant %*% Y_ant)) - l* Y_ant)
+    
+    k <- k+1
+    
+    funcObj_nuevo <- normVec(X-W *(U_nuevo %*% Y_nuevo))
+    
+    
+  }
+  
+  mu <- apply(W * (X - U_nuevo %*% Y_nuevo), FUN = sum, MARGIN = 1)/apply(W, FUN = sum, MARGIN = 1)
+  
+  qrAux <- qr(U_nuevo)
+	U <- qr.Q(qrAux)[,1:p]
+	
+	tiempoFinal <- Sys.time()
+	
+  if (k > maxit){
+    warning("El algoritmo no convergió")
+    message(paste("Error relativo", funcObj_nuevo))
+  } else{
+    message(paste("El algoritmo convergió en", k, "iteraciones. Tiempo hasta la convergencia:", difftime(tiempoFinal, tiempoComienzo, units = "mins")))
+  }
+  
+  return(list(U = U, Y = Y_nuevo, Tiempo = difftime(tiempoFinal, tiempoComienzo, units = "mins"), CantIt = k))
+}
+```
+
+```{r}
+grafPCA_altMin <- function(altMin, xPC, yPC){
+  library(ggplot2)
+  
+  U <- as.matrix(altMin$U)
+  Y <- as.matrix(altMin$Y)
+  
+  # construimos el data frame necesario para poder graficar
+  nombreEjex <- paste("PC", xPC, sep = "")
+  nombreEjey <- paste("PC", yPC, sep = "")
+  
+  puntosGrafica <- data.frame(nombreEjex = Y[xPC,], 
+                              nombreEjey = Y[yPC, ])
+
+
+g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
+    geom_point(data = puntosGrafica, alpha = 0.5, size=3) + xlab(nombreEjex) + ylab(nombreEjey)
+    
+    
+    print(g)
+
+}
+```

@@ -89,17 +89,18 @@ simulaPob <- function(F, n){
 Este caso consiste en la simulación 50 individuos de cada una de las poblaciones de base (por lo tanto $n = 150$) y una cantidad variable de SNPs (esto es, $d$ variable). Construiremos cuatro matrices para estudiar la velocidad de los algoritmos y su capacidad de escalabilidad. Las cuatro matrices corresponderán a $d = 500, d = 1000, d = 5000$ y $d = 10 000$. Para esto fijaremos $d$ posiciones del vector $\texttt{frec_alel}$ y simularemos 150 individuos mediante la función $\texttt{simulaPob()}$. 
 
 ```{r}
-set.seed(17)
+set.seed(1)
 
 pos <- sort(sample(2: 49408, replace = F, size = 2000))
 
 caso1 <- simulaPob(frec_alel[,pos[1:2000]], n = 50)
 
-caso1_1 <- limpiarMatriz(caso1[1:250,], indCol = T)$Resultado
-caso1_2 <- limpiarMatriz(caso1[1:500,], indCol = T)$Resultado
-caso1_3 <- limpiarMatriz(caso1[1:1000,], indCol = T)$Resultado
-caso1_4 <- limpiarMatriz(caso1[1:2000,], indCol = T)$Resultado
+caso1_na <- hacerNA(caso1, p = 0.3)
 
+caso1_1 <- limpiarMatriz(caso1_na[1:250,], indCol = T)$Resultado
+caso1_2 <- limpiarMatriz(caso1_na[1:500,], indCol = T)$Resultado
+caso1_3 <- limpiarMatriz(caso1_na[1:1000,], indCol = T)$Resultado
+caso1_4 <- limpiarMatriz(caso1_na[1:2000,], indCol = T)$Resultado
 ```
 
 

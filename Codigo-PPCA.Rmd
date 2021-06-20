@@ -347,9 +347,9 @@ ppcaParal <- function(X, maxit, eps, impr, p){
 	
 	# inicializamos el parametro impr
 	# en caso de que este no haya sido determinado
-	#if(missing(impr)){
-	#	impr <- round(maxit/100)
-	#}
+	if(missing(impr)){
+		impr <- round(maxit/100)
+	}
 	
 	# inicializamos el iterador
 	k <- 0
@@ -359,15 +359,14 @@ ppcaParal <- function(X, maxit, eps, impr, p){
 	evol <- c()
 	
 	while((funcObj > eps) & (k <= maxit)){
-		#if(k %% impr == 0){
-		#	print(paste("Iteracion =", k))
-		#	print(paste("Error relativo =", funcObj))
-		#}
+		if(k %% impr == 0){
+			print(paste("Iteracion =", k))
+			print(paste("Error relativo =", funcObj))
+		}
 
 		mu_anterior <- mu_nuevo
 		list <- list("P" = P, "X" = X, "d" = d, "naX" = naX, "mu" = mu_nuevo, "sigma" = sigma)
 		X <- jubilee.mcsapply(1:n, FUN = iterPPCA2, list = list)
-		#X <- sapply(1:n, FUN = iterPPCA2)
 		
 		mu_nuevo <- apply(X, MARGIN = 1, FUN = mean)
 		
@@ -397,28 +396,6 @@ ppcaParal <- function(X, maxit, eps, impr, p){
 	Y <- solve(t(U) %*% U + error*diag(p)) %*% t(U) %*% (X - mu_nuevo %*% t(rep(1, n)))
 	
 	return(list("Y" = Y, "U" = U, "Evol" = evol, "Tiempo" = difftime(tiempoFinal, tiempoComienzo, units = "mins")))
-}
-```
-
-```{r}
-grafPCA <- function(ppca, xPC, yPC){
-  library(ggplot2)
-  
-  # obtenemos los puntos reconstruidos proyectados
-  puntos <- ppca$Y
-  
-  # construimos el data frame necesario para poder graficar
-  nombreEjex <- paste("PC", xPC, sep = "")
-  nombreEjey <- paste("PC", yPC, sep = "")
-  
-  puntosGrafica <- data.frame(nombreEjex = ppca$Y[xPC,],
-                              nombreEjey = ppca$Y[yPC,])
-  
-    g <- ggplot(data = NULL, aes_string(x="nombreEjex", y="nombreEjey")) + 
-    geom_point(data = puntosGrafica, alpha = 0.5, size=3) + xlab(nombreEjex) + ylab(nombreEjey)
-    
-    
-    print(g)
 }
 ```
 

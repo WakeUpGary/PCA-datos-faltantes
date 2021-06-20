@@ -34,10 +34,10 @@ for (i in 1:10000){
 		if ((1 <= j) & (j< 51)){
 			M[i, 1:50] <- rbinom(n = 50, size = 1, prob = pPosiciones[1*j])
 		}
-		if ((51 <= i) & (i< 101)){
+		if ((51 <= j) & (j< 101)){
 			M[i, 51:100] <- rbinom(n = 50, size = 1, prob = pPosiciones[2*j])
 		}
-		if ((101 <= i) & (i< 151)){
+		if ((101 <= j) & (j< 151)){
 			M[i, 101:150] <- rbinom(n = 50, size = 1, prob = pPosiciones[3*j])
 		}
 	}
